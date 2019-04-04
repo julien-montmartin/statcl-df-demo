@@ -1,0 +1,486 @@
+#!/bin/sh
+
+
+################################################################################
+#
+# dfDemo
+#
+################################################################################
+
+#Validation de l'environnement et cie (commence avec un looong commentaire)	\
+																			\
+TCL=$(which tclsh);															\
+																			\
+if [ -z "${TCL}" ];															\
+then																		\
+																			\
+	printf "Could not find a tcl interpreter" >&2;							\
+	exit 1;																	\
+																			\
+fi > /dev/null;																\
+																			\
+printf "About to run '${TCL}'\n"											\
+																			\
+#Voir man tclsh																\
+exec "${TCL}" "$0" ${1+"$@"}
+################################################################################
+
+
+package require struct::list
+
+namespace eval colors {
+
+	namespace export names palette luminance
+
+	# Palettes populaires issues de http://color.adobe.com
+	# (et converties avec http://carl.camera/sandbox/aseconvert)
+	# Sauf Rabbit, inspirée de CSS Edit
+
+	variable palettes {
+		"Checked Baggage 1"		{ "#324d5c" "#46b29d" "#f0ca4d" "#e37b40" "#de5b49" }
+		"Segura Modern Theme"	{ "#ffffff" "#cacbd5" "#666f89" "#3d4252" "#d55e2d" }
+		"Warme groentinten"		{ "#e6f5f7" "#9fe3dd" "#51bfb5" "#11625b" "#004843" }
+		"Optimist"				{ "#6c6e58" "#3e423a" "#417378" "#a4cfbe" "#f4f7d9" }
+		"Circus III"			{ "#2e0927" "#d90000" "#ff2d00" "#ff8c00" "#04756f" }
+		"Color Theme 10"		{ "#111826" "#c5d9c7" "#bfb7a8" "#8c8372" "#bf4141" }
+		"Crepusculo"			{ "#5e005e" "#ab2f52" "#e55d4a" "#e88554" "#ffaf53" }
+		"Kopie Aberdeen Reds"	{ "#2e112d" "#540032" "#820333" "#c9283e" "#f0433a" }
+		"Color Theme 6"			{ "#f6c5c0" "#b1a692" "#b4baba" "#f2f2f2" "#c1a29b" }
+		"Color Theme 44"		{ "#022601" "#3e5902" "#f2b035" "#f2811d" "#732002" }
+		"cool-one"				{ "#3c989e" "#5db5a4" "#f4cda5" "#f57a82" "#ed5276" }
+		"Verifone Gray Shades"	{ "#313335" "#b2bbc1" "#6c7175" "#787e82" "#54585b" }
+		"Rabbit"		{ "#5a5a5a" "#478ace" "#8a4eab" "#b7b7b7" "#57aa1e" "#d65001" }
+	}
+
+	variable shuffled {}
+}
+
+
+# colors::names --
+#
+#	Retourne la liste des noms des différentes palettes du module
+
+proc colors::names {} {
+
+	variable palettes
+
+	return [lsort [dict keys $palettes]]
+}
+
+
+# colors::palette --
+#
+#	Retourne une liste contenant les couleurs de la palette désignée par name ou
+#   une palette aléatoire si name n'est pas valorisé.
+#
+#   La sélection des palettes veille à ce qu'elles soient toutes parcourues
+#   l'une après l'autre, mais dans un ordre aléatoire.
+#
+#	Au sein d'une palette, les couleurs sont triées de la plus sombre à la plus
+#	claire (cad d'après leur luminance)
+#
+#   name	le nom de la palette souhaitée, telque retourné par colors::names
+
+proc colors::palette { {name {}} } {
+
+	variable palettes
+	variable shuffled
+
+	if {$name eq {}} {
+
+		if {$shuffled eq {}} {
+
+			set shuffled [::struct::list shuffle [dict values $palettes]]
+		}
+
+		set p [::struct::list shift shuffled]
+
+	} else {
+
+		set p [dict get $palettes $name]
+	}
+
+	return [lsort -command isDarkerThan $p]
+}
+
+
+# colors::luminance --
+#
+#	Retourne la luminance de la couleur comprise entre 0 et 255.
+#	D'après cette réponse https://stackoverflow.com/a/1754281
+#
+#	rgbColor	Une couleur au format #rrggbb
+
+proc colors::luminance { rgbColor } {
+
+	scan $rgbColor "#%2x%2x%2x" r g b
+
+	return [expr {round((0.299*$r)+(0.587*$g)+(0.114*$b))}]
+}
+
+
+# colors::isDarkerThan --
+#
+#	Compare la luminance de deux couleurs et retourne -1 si la première est plus
+#	sombre que la deuxième, 0 si les luminances sont égales, et 1 si la première
+#	est plus claire.
+#
+#	rgb1,rgb2	Couleurs au format #rrggbb
+
+proc colors::isDarkerThan {rgb1 rgb2} {
+
+	set l1 [luminance $rgb1]
+	set l2 [luminance $rgb2]
+
+	set rv 0
+
+	if {$l1 < $l2} {
+
+		set rv -1
+
+	} elseif {$l1 > $l2} {
+
+		set rv 1
+	}
+
+	return $rv
+}
+
+
+package provide modules::colors 0.1
+namespace eval logger {
+
+	namespace export createFrame createStyle
+}
+
+
+proc logger::createFrame {w} {
+
+	ttk::frame $w.frm
+
+	scrollbar $w.frm.vscroll -command [list $w.frm.txt yview]
+
+	text $w.frm.txt -yscrollcommand [list $w.frm.vscroll set] \
+		-highlightthickness 0 -setgrid 1 -width 60 -height 10 -undo 0 -autosep 1
+
+	grid columnconfigure $w.frm 0 -weight 1
+	grid rowconfigure $w.frm 0 -weight 1
+
+	grid $w.frm.txt -column 0 -row 0 -sticky news
+	grid $w.frm.vscroll -column 1 -row 0 -sticky ns
+
+	return $w.frm
+}
+
+
+proc logger::createStyle {frm style args} {
+
+	if {[llength $args] & 1} {
+
+		error "Odd key value list, no value for key [lindex $args end]"
+	}
+
+	foreach {key value} $args {
+
+		switch $key {
+
+			margin	{
+
+				$frm.txt tag configure $style -lmargin1 $value
+				$frm.txt tag configure $style -lmargin2 $value
+			}
+
+			spacing {
+
+				$frm.txt tag configure $style -spacing1 12
+				$frm.txt tag configure $style -spacing3 12
+
+			}
+
+			linefg {
+
+				$frm.txt tag configure $style -foreground $value
+			}
+
+			linebg {
+
+				$frm.txt tag configure $style -background $value
+			}
+
+			 accentfg - accentbg {
+
+				 set $key $value
+			 }
+
+			default {
+
+				error "Unsupported key {$key} with value {$value}"
+			}
+		}
+	}
+
+	# Le style d'accent est le dernier pour avoir la plus haute priorité
+
+	if {[info exists accentfg]} {
+
+		$frm.txt tag configure accent${style} -foreground $accentfg
+	}
+
+	if {[info exists accentbg]} {
+
+		$frm.txt tag configure accent${style} -background $accentbg
+	}
+
+	eval "proc log${style} {txt} {		\
+										\
+   		LogWithStyle $frm \$txt $style	\
+	 }"
+
+	namespace export log${style}
+}
+
+
+proc logger::LogWithStyle {frm txt style} {
+
+	#Where to start highlighting
+	set start [$frm.txt index {end - 1 line}]
+
+	$frm.txt configure -state normal
+
+	#Substitute highlight marks with left and right “double quotation mark”
+	regsub -all "<!" $txt "\u201c" txt
+	regsub -all "!>" $txt "\u201d" txt
+
+	$frm.txt insert end "$txt\n" $style
+
+	set re {(\u201c[^\u201d]*\u201d)}
+
+	#Iterate over each region to hihilight
+	set i [$frm.txt search -regex -count l -- $re $start end]
+
+	while {$i != ""} {
+
+		$frm.txt tag add accent${style} $i "$i + $l chars"
+
+		set i [$frm.txt search -regex -count l -- $re "$i + $l chars" end]
+	}
+
+	$frm.txt configure -state disabled
+
+	#Scroll down !
+	$frm.txt see end
+}
+
+
+package provide modules::logger 0.1
+#!/usr/bin/env tclsh
+
+
+################################################################################
+#
+# Import des packages nécéssaires, dont les modules colors et logger
+#
+###############################################################################
+
+package require Tk
+package require tile
+package require struct::list
+
+tcl::tm::add ..
+
+package require modules::colors
+package require modules::logger
+
+
+################################################################################
+#
+# Création de la fenêtre principale
+#
+################################################################################
+
+set w {}
+
+wm title .$w "Disk Free GUI"
+
+#Il y aura un -setgrid dans le logger, donc on exprime la taille en caractères
+wm minsize .$w 80 20
+
+
+################################################################################
+#
+# Création de la toolbar avec le bouton run et les options
+#
+################################################################################
+
+set toolbar [ttk::frame $w.toolbar]
+
+set run [ttk::button $toolbar.run -width 0 -text "Lancer df"]
+set lb1 [ttk::label $toolbar.lb1 -text "taille en multiple de "]
+
+set hOpt {-h}
+set rb1 [ttk::radiobutton $toolbar.rb1 -text "1024 " -variable hOpt -value {-h}]
+set rb2 [ttk::radiobutton $toolbar.rb2 -text "1000 " -variable hOpt -value {-H}]
+
+set localOpt {}
+set cb1 [ttk::checkbutton $toolbar.cb1 -text "limiter aux FS locaux " \
+			 -variable localOpt -onvalue {-l} -offvalue {} ]
+
+
+################################################################################
+#
+# Création de deux panneaux redimensionnables pour le contenu
+#	- la sortie de df, en colonne, va en haut
+#	- la zone de log va en bas
+#
+################################################################################
+
+set separator [ttk::separator $w.separator -orient horizontal]
+
+set outer [ttk::panedwindow $w.outer -orient vertical -width 480 -height 320]
+
+set top [ttk::frame $outer.top]
+set bottom [ttk::frame $outer.bottom]
+
+
+################################################################################
+#
+# Création de la zone d'affichage à 3 colonnes pour la sortie de df
+#
+################################################################################
+
+#Bug ? - Le "é" de Utilsé passe mal !
+set colLabels {"Point de montage" "Utilis\u00e9" "Disponible" "Pourcentage"}
+set colIds {mount used free percent}
+set colWidths {120 100 100 100}
+
+set cols [ttk::treeview $top.cols -columns  $colIds\
+			  -show headings -yscroll [list $top.sb set]]
+
+foreach id $colIds label $colLabels width $colWidths {
+
+	$cols heading $id -text $label -anchor w
+	$cols column $id -minwidth $width -width $width -stretch 0
+}
+
+$cols column mount -stretch 1
+
+set sb [ttk::scrollbar $top.sb -orient vertical -command [list $cols yview]]
+
+
+################################################################################
+#
+# Création de la zone de log
+#
+################################################################################
+
+set log [logger::createFrame $bottom]
+
+lassign [colors::palette Rabbit] \
+	infoClr stepClr errClr accentClr outClr verbClr
+
+logger::createStyle $log Step linefg $stepClr accentfg $accentClr spacing 12
+logger::createStyle $log Info linefg $infoClr accentfg $accentClr margin 24
+logger::createStyle $log Verbose linefg $verbClr accentfg $accentClr margin 24
+logger::createStyle $log Cmd linefg $infoClr accentfg $accentClr margin 24
+logger::createStyle $log Out linefg $outClr accentfg $accentClr margin 24
+logger::createStyle $log Err linefg $errClr accentfg $accentClr margin 24
+
+namespace import logger::log*
+
+logStep "Import commands"
+logInfo "Found [lmap p [namespace import] {list <!${p}!>}]"
+
+
+################################################################################
+#
+# Placement des éléments de l'interface
+#
+################################################################################
+
+$outer add $top -weight 1
+$outer add $bottom
+
+grid columnconfigure . 0 -weight 1
+grid rowconfigure . 2 -weight 1
+
+grid $toolbar -column 0 -row 0 -sticky news
+pack $run -side left
+
+#Comme on empile par la droite on commence par le dernier widget (ordre inverse)
+pack $cb1 -side right
+pack $rb2 -side right
+pack $rb1 -side right
+pack $lb1 -side right
+
+grid columnconfigure $top 0 -weight 1
+grid rowconfigure $top 0 -weight 1
+
+grid columnconfigure $bottom 0 -weight 1
+grid rowconfigure $bottom 0 -weight 1
+
+grid $separator -column 0 -row 1 -sticky news
+grid $outer -column 0 -row 2 -sticky news
+
+grid $cols -column 0 -row 0 -sticky news
+grid $sb -column 1 -row 0 -sticky nes
+
+grid $log -column 0 -row 0 -sticky news
+
+
+################################################################################
+#
+# Pour finir, on lie le bouton au code qui lance df et parse sa sortie
+#
+################################################################################
+
+bind $run <Button-1> {
+
+	$cols delete [$cols children {}]
+
+	logStep "Run df"
+
+	set cmd [subst {exec df $hOpt $localOpt --output=target,used,avail,pcent}]
+
+	logCmd $cmd
+
+	set cmdOut {}
+	set cmdErr {}
+
+	if {[catch {set cmdOut [eval $cmd]} cmdErr]} {
+
+		logErr $cmdErr
+
+	} else {
+
+		logOut $cmdOut
+
+		logStep "Parse output"
+
+		set lines [split $cmdOut "\n"]
+
+		set header [::struct::list shift lines]
+
+		logVerbose "Header $header"
+
+		foreach line $lines {
+
+			#On est dans un gestionnaire d'évènement, les % sont substitués !
+			#%d par exemple correspond au champ détail d'un ev. On écrit donc
+			#%%, qui est une substitution valide, remplacée par un seul %.
+			set fields [scan $line "%%s %%s %%s %%d" mount used free percent]
+
+			logVerbose [list Parse mount=<!$mount!> \
+							used=<!$used!> free=<!$free!> percent=<!$percent!>]
+
+			if { $fields == 4 } {
+
+				set id [$cols insert {} end -values \
+							[list $mount $used $free "$percent %%"]]
+
+			} else {
+
+				logErr "Could not parse line <!$line!>"
+			}
+		}
+	}
+}

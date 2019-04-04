@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=dfDemo
+Icon=feather
+Type=Application
+Exec=wish8.6 dfDemo
+Categories=Utility;
